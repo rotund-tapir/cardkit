@@ -47,6 +47,7 @@ import kotlin.time.Duration.Companion.milliseconds
  * game is dealt, which bot plays an empty seat, what the final scoreline is — is delegated to
  * [descriptor].
  */
+@Suppress("LargeClass") // the room actor IS the domain: splitting it would scatter one state machine
 class Room<S : Any, A : Any, V : Any, C : Any>(
     val gameId: String,
     var joinCode: String,
@@ -118,6 +119,13 @@ class Room<S : Any, A : Any, V : Any, C : Any>(
 
         /** The session token that owns this seat, so a reconnect can only reclaim its own seat. */
         var ownerToken: String? = null
+
+        /**
+         * Bumped on every in-game disconnect; a [RoomCommand.GameDisconnectGraceExpired] carries the
+         * generation it was scheduled for, so a stale expiry from an earlier drop (reconnect, then
+         * drop again) can't cut the newer grace short.
+         */
+        var graceGeneration: Int = 0
     }
 
     /** Enqueue a command for the actor loop. Never blocks (the channel is unbounded). */
@@ -164,6 +172,7 @@ class Room<S : Any, A : Any, V : Any, C : Any>(
             is RoomCommand.Rematch -> onRematch(command)
             is RoomCommand.Disconnected -> onDisconnected(command)
             is RoomCommand.DisconnectGraceExpired -> onDisconnectGraceExpired(command)
+            is RoomCommand.GameDisconnectGraceExpired -> onGameGraceExpired(command)
             is RoomCommand.StateProduced -> onStateProduced(command.state)
             is RoomCommand.GameFinished -> onGameFinished(command.state)
             is RoomCommand.ForceDisband -> disband(command.reason)
@@ -457,6 +466,7 @@ class Room<S : Any, A : Any, V : Any, C : Any>(
         if (zombie != null && zombie.id != cmd.connection.id) zombie.requestClose()
         slot.occupant = cmd.connection
         slot.host?.occupant = cmd.connection
+        slot.host?.awaitingReclaim = false
         cmd.connection.roomId = gameId
         cmd.connection.seat = cmd.seat
         sessionRegistry.bind(cmd.connection.sessionToken, gameId, cmd.seat)
@@ -464,6 +474,7 @@ class Room<S : Any, A : Any, V : Any, C : Any>(
         replayView(cmd.connection, cmd.seat)
         finalResult?.let { deliver(cmd.connection, it) } // a late reconnector still sees the result
         if (phase == RoomPhase.PLAYING) broadcastSeatStatus(cmd.seat, OccupancyStatus.HUMAN)
+        if (phase == RoomPhase.PLAYING) refreshOccupancy(cmd.connection, cmd.seat)
         maybeStartRestoredDriver()
         recomputeEmptiness()
     }
@@ -489,7 +500,24 @@ class Room<S : Any, A : Any, V : Any, C : Any>(
     private fun onDisconnected(cmd: RoomCommand.Disconnected) {
         val slot = slotOf(cmd.connection) ?: return
         if (phase == RoomPhase.PLAYING) {
-            substituteBot(slot)
+            if (config.gameDisconnectGraceMillis <= 0) {
+                substituteBot(slot)
+            } else {
+                // Hold the seat: the host parks the turn (awaitingReclaim) instead of botting it,
+                // so an app-switch or brief drop resumes exactly where it left off. Other players
+                // wait at most the grace on top of the normal turn timeout. No status broadcast —
+                // the seat is still the human's until the grace expires.
+                slot.occupant = null
+                slot.host?.occupant = null
+                slot.host?.awaitingReclaim = true
+                slot.graceGeneration++
+                val generation = slot.graceGeneration
+                val seat = slot.seat
+                scope.launch {
+                    delay(config.gameDisconnectGraceMillis)
+                    submit(RoomCommand.GameDisconnectGraceExpired(seat, generation))
+                }
+            }
         } else {
             // Lobby/post-game: hold the seat (and its session→seat binding) for a short grace
             // window instead of acting on the drop immediately, so a page reload — which closes the
@@ -525,10 +553,20 @@ class Room<S : Any, A : Any, V : Any, C : Any>(
         recomputeEmptiness()
     }
 
+    private fun onGameGraceExpired(cmd: RoomCommand.GameDisconnectGraceExpired) {
+        val slot = slots.getOrNull(cmd.seat.index) ?: return
+        // Stale (an older drop's timer) or already resolved (reclaimed, or the game ended).
+        if (cmd.generation != slot.graceGeneration) return
+        if (slot.occupant != null || phase != RoomPhase.PLAYING) return
+        if (slot.host?.awaitingReclaim != true) return
+        substituteBot(slot)
+    }
+
     /** In-game handling of a vanished occupant: the bot plays the seat until its owner reclaims it. */
     private fun substituteBot(slot: Slot) {
         slot.occupant = null
         slot.host?.occupant = null
+        slot.host?.awaitingReclaim = false
         slot.host?.interrupt() // wake a parked turn so the bot covers it now, not after the timeout
         broadcastSeatStatus(slot.seat, OccupancyStatus.BOT_SUBSTITUTE)
     }
@@ -646,6 +684,24 @@ class Room<S : Any, A : Any, V : Any, C : Any>(
             null
         }
         deliver(connection, update.copy(turnRemainingMillis = remaining))
+    }
+
+    /**
+     * [SeatStatus] is a transient broadcast: a client that was itself disconnected when another
+     * seat's substitution or reclaim was announced resumes with a stale occupancy picture, and
+     * nothing else in the resume flow corrects it — the reclaimed player's name stays "(bot)" on
+     * that client forever. So every reconnector is refreshed with the CURRENT status of every
+     * other human-owned seat (permanent bots were never announced and need no correction).
+     */
+    private fun refreshOccupancy(reconnector: PlayerConnection, ownSeat: Seat) {
+        slots.asSequence()
+            .filter { it.seat != ownSeat }
+            .filter { it.host?.permanentBot == false }
+            .forEach { slot ->
+                val held = slot.occupant != null || slot.host?.awaitingReclaim == true
+                val status = if (held) OccupancyStatus.HUMAN else OccupancyStatus.BOT_SUBSTITUTE
+                deliver(reconnector, SeatStatus(slot.seat, status))
+            }
     }
 
     private fun deliver(connection: PlayerConnection, message: ServerMessage) {

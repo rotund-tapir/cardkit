@@ -68,9 +68,21 @@ class SeatHost<V : Any, A : Any>(
         drain(interrupts)
     }
 
+    /**
+     * True while the seat's human has dropped but the room is holding it through the in-game
+     * disconnect grace: [decide] parks instead of falling straight to the bot, so a reconnect
+     * inside the grace resumes the turn as if nothing happened. Cleared by reclaim (occupant set)
+     * or by grace expiry ([io.github.rotundtapir.cardkit.server.Room] then interrupts, and the
+     * bot covers from there).
+     */
+    @Volatile
+    var awaitingReclaim: Boolean = false
+
     override suspend fun decide(view: V): A {
+        if (permanentBot) return bot.decide(view, botRandom)
         val conn = occupant
-        if (permanentBot || conn == null || !conn.connected) {
+        val absent = conn == null || !conn.connected
+        if (absent && !awaitingReclaim) {
             return bot.decide(view, botRandom)
         }
         // The client already has this view (the room fanned it out after the previous action); it

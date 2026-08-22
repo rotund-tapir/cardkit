@@ -47,6 +47,12 @@ sealed interface RoomCommand<out S, out A> {
      * The reconnect grace window scheduled by a lobby/post-game [Disconnected] ran out. A no-op if
      * the seat's owner reconnected in the meantime (the slot then holds a different connection).
      */
+    /** The in-game disconnect grace for [seat] ran out without a reclaim: the bot takes over. */
+    data class GameDisconnectGraceExpired(
+        val seat: io.github.rotundtapir.cardkit.core.Seat,
+        val generation: Int,
+    ) : RoomCommand<Nothing, Nothing>
+
     data class DisconnectGraceExpired(val connection: PlayerConnection) : RoomCommand<Nothing, Nothing>
 
     /**
