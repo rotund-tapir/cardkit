@@ -71,11 +71,14 @@ class RoomTest {
         dataDir: String? = null,
         idleDisbandMillisOverride: Long? = null,
         lobbyDisconnectGraceMillis: Long = 60_000,
+        // 0 = the pre-grace instant substitution, which most tests here rely on for promptness.
+        gameDisconnectGraceMillis: Long = 0,
     ) = ServerConfig(
         devMode = true,
         dataDir = dataDir,
         idleDisbandMillisOverride = idleDisbandMillisOverride,
         lobbyDisconnectGraceMillis = lobbyDisconnectGraceMillis,
+        gameDisconnectGraceMillis = gameDisconnectGraceMillis,
     )
 
     private var nextId = 0L
@@ -207,6 +210,92 @@ class RoomTest {
         room.submit(RoomCommand.Reconnect(resumed, guestSeat))
         awaitSeatStatus(host, guestSeat, OccupancyStatus.HUMAN)
         assertEquals(guestSeat, resumed.seat)
+    }
+
+    @Test
+    fun `an in-game disconnect inside the grace never surfaces a bot - the owner resumes seamlessly`() = runBlocking {
+        val server = server(devConfig(gameDisconnectGraceMillis = 60_000))
+        val (host, lobby) = server.createLobby()
+        val guest = connection("guest")
+        server.route(guest, JoinLobby(lobby.joinCode, "Bob"))
+        val guestLobby: LobbyState<ToyConfig> = guest.await()
+        val guestSeat = assertNotNull(guestLobby.yourSeat)
+        server.route(guest, SetReady(true))
+        server.route(host, StartGame)
+        awaitLobbyPhase(host, RoomPhase.PLAYING)
+        val room = assertNotNull(server.rooms.find(lobby.joinCode))
+
+        guest.connected = false
+        server.onDisconnected(guest)
+        // The seat is held: no substitution broadcast arrives while the grace runs.
+        val leaked = withTimeoutOrNull(500) {
+            var next = host.outbound.receive()
+            while (!(next is SeatStatus && next.status == OccupancyStatus.BOT_SUBSTITUTE)) {
+                next = host.outbound.receive()
+            }
+            next
+        }
+        assertNull(leaked, "the bot must not take the seat inside the grace")
+
+        // Reclaim inside the grace: the seat comes back HUMAN, having never been a bot.
+        val resumed = connection("guest")
+        room.submit(RoomCommand.Reconnect(resumed, guestSeat))
+        awaitSeatStatus(host, guestSeat, OccupancyStatus.HUMAN)
+        assertEquals(guestSeat, resumed.seat)
+    }
+
+    @Test
+    fun `an in-game disconnect grace that expires hands the seat to the bot`() = runBlocking {
+        val server = server(devConfig(gameDisconnectGraceMillis = 200))
+        val (host, lobby) = server.createLobby()
+        val guest = connection("guest")
+        server.route(guest, JoinLobby(lobby.joinCode, "Bob"))
+        val guestLobby: LobbyState<ToyConfig> = guest.await()
+        val guestSeat = assertNotNull(guestLobby.yourSeat)
+        server.route(guest, SetReady(true))
+        server.route(host, StartGame)
+        awaitLobbyPhase(host, RoomPhase.PLAYING)
+
+        guest.connected = false
+        server.onDisconnected(guest)
+        val substituted = awaitSeatStatus(host, guestSeat, OccupancyStatus.BOT_SUBSTITUTE)
+        assertEquals(guestSeat, substituted.seat)
+    }
+
+    @Test
+    fun `a reconnector is told the current occupancy it missed while away`() = runBlocking {
+        // SeatStatus is a transient broadcast, so a client disconnected when another seat's
+        // substitution/reclaim was announced resumes with a stale picture ("(bot)" forever) unless
+        // the reconnect refreshes it. Assert the refresh: a reconnector is told every human seat's
+        // CURRENT status. One human stays seated throughout so the bots can't race the game to its
+        // terminal state while the other seat changes hands.
+        val server = server() // grace 0: substitution is immediate
+        val (host, lobby) = server.createLobby()
+        val guest = connection("guest")
+        server.route(guest, JoinLobby(lobby.joinCode, "Bob"))
+        val guestLobby: LobbyState<ToyConfig> = guest.await()
+        val guestSeat = assertNotNull(guestLobby.yourSeat)
+        server.route(guest, SetReady(true))
+        server.route(host, StartGame)
+        awaitLobbyPhase(host, RoomPhase.PLAYING)
+        val room = assertNotNull(server.rooms.find(lobby.joinCode))
+
+        // The guest's seat goes bot and comes back human while the host is present...
+        guest.connected = false
+        server.onDisconnected(guest)
+        awaitSeatStatus(host, guestSeat, OccupancyStatus.BOT_SUBSTITUTE)
+        val guestBack = connection("guest")
+        room.submit(RoomCommand.Reconnect(guestBack, guestSeat))
+        awaitSeatStatus(host, guestSeat, OccupancyStatus.HUMAN)
+
+        // ...then the host cycles: its resume must carry the guest seat's CURRENT status.
+        val hostSeat = assertNotNull(lobby.yourSeat)
+        host.connected = false
+        server.onDisconnected(host)
+        val hostBack = connection("creator")
+        room.submit(RoomCommand.Reconnect(hostBack, hostSeat))
+        val refreshed = awaitSeatStatus(hostBack, guestSeat, OccupancyStatus.HUMAN)
+        assertEquals(guestSeat, refreshed.seat)
     }
 
     // The two halves of restart survival are tested separately and deliberately. Driving one live

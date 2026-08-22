@@ -37,6 +37,13 @@ data class ServerConfig(
      */
     val lobbyDisconnectGraceMillis: Long = 15 * 60_000L,
     /**
+     * How long a PLAYING room holds a dropped human's seat before the bot takes over. Android
+     * backgrounds an app-switch away; without a grace the bot steals the very turn the player
+     * was thinking about. The current turn simply keeps waiting during the grace (the turn
+     * timeout still bounds it), so opponents wait at most this long extra for a vanished player.
+     */
+    val gameDisconnectGraceMillis: Long = 3 * 60_000L,
+    /**
      * Directory for room snapshots, so in-flight games survive a restart (rejoin via the existing
      * session tokens). Null (the default) keeps in-memory-only behaviour: a restart drops every
      * game. A deployment mounts a volume and sets `DATA_DIR=/data`.
@@ -86,6 +93,7 @@ data class ServerConfig(
                 maxFrameBytes = long("MAX_FRAME_BYTES", defaults.maxFrameBytes),
                 sessionTtlMillis = long("SESSION_TTL_MILLIS", defaults.sessionTtlMillis),
                 lobbyDisconnectGraceMillis = long("LOBBY_GRACE_MILLIS", defaults.lobbyDisconnectGraceMillis),
+                gameDisconnectGraceMillis = long("GAME_GRACE_MILLIS", defaults.gameDisconnectGraceMillis),
                 dataDir = getenv("DATA_DIR")?.takeIf { it.isNotBlank() } ?: defaults.dataDir,
                 devMode = bool("DEV_MODE", defaults.devMode),
             )
