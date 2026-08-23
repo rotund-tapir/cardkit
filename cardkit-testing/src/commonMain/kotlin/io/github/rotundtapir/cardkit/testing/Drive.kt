@@ -23,12 +23,19 @@ import kotlin.random.Random
  * exactly as a real player would (peeking at hidden state is what this seam prevents).
  * [onState] observes the initial state and every state after an applied action, for tests that
  * assert invariants across the whole trajectory.
+ *
+ * [construct] covers actions a game cannot enumerate. Not every legal move is drawn from a list:
+ * 500's kitty exchange is "discard any 3 of your 13", a combinatorial set its rules deliberately
+ * do not expand, so `legalActions` is empty there while the seat still has a move to make. Without
+ * this hook such a phase looks exactly like a stalled game. Return null (the default) to keep the
+ * strict reading — an empty legal set is then a rules bug, as it is for most games.
  */
 fun <State, Action, View> drive(
     rules: GameRules<State, Action, View>,
     initial: State,
     maxSteps: Int = 100_000,
     onState: (State) -> Unit = {},
+    construct: (view: View) -> Action? = { null },
     policy: (view: View, legal: List<Action>) -> Action,
 ): State {
     var state = initial
@@ -42,12 +49,22 @@ fun <State, Action, View> drive(
             "Non-terminal state has no actor (rules bug) after $steps steps"
         }
         val legal = rules.legalActions(state, actor)
-        check(legal.isNotEmpty()) {
-            "Actor $actor has no legal actions in a non-terminal state (rules bug) after $steps steps"
-        }
-        val action = policy(rules.view(state, actor), legal)
-        check(action in legal) {
-            "Policy chose $action for $actor, which is not among that seat's ${legal.size} legal actions"
+        val view = rules.view(state, actor)
+        val action = if (legal.isEmpty()) {
+            // Either a phase whose action is constructed rather than chosen from a list, or a
+            // genuine stall. [construct] decides which; its result is not checked against `legal`
+            // (there is nothing to check against) — an illegal one fails in `apply` instead.
+            checkNotNull(construct(view)) {
+                "Actor $actor has no legal actions in a non-terminal state (rules bug, or a " +
+                    "constructed-action phase that needs the `construct` hook) after $steps steps"
+            }
+        } else {
+            policy(view, legal).also { chosen ->
+                check(chosen in legal) {
+                    "Policy chose $chosen for $actor, which is not among that seat's " +
+                        "${legal.size} legal actions"
+                }
+            }
         }
         state = rules.apply(state, actor, action)
         onState(state)
@@ -66,4 +83,5 @@ fun <State, Action, View> driveRandomly(
     rng: Random,
     maxSteps: Int = 100_000,
     onState: (State) -> Unit = {},
-): State = drive(rules, initial, maxSteps, onState) { _, legal -> legal.random(rng) }
+    construct: (view: View) -> Action? = { null },
+): State = drive(rules, initial, maxSteps, onState, construct) { _, legal -> legal.random(rng) }

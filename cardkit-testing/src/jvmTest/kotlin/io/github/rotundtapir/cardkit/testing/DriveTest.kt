@@ -21,7 +21,42 @@ private class CountingRules(private val target: Int) : GameRules<Int, Int, Int> 
     override fun apply(state: Int, seat: Seat, action: Int): Int = state + action
 }
 
+/**
+ * A rules set with a *constructed*-action phase: on an odd state nothing is enumerable (as 500's
+ * kitty exchange is "any 3 of your 13"), so the driver must ask the `construct` hook instead of
+ * concluding the game has stalled.
+ */
+private class ConstructedActionRules(private val target: Int) : GameRules<Int, Int, Int> {
+    override fun currentActor(state: Int): Seat? = if (state >= target) null else Seat(0)
+    override fun isTerminal(state: Int): Boolean = state >= target
+    override fun view(state: Int, seat: Seat): Int = state
+    override fun legalActions(state: Int, seat: Seat): List<Int> =
+        if (state % 2 == 0) listOf(1) else emptyList()
+    override fun apply(state: Int, seat: Seat, action: Int): Int = state + action
+}
+
 class DriveTest {
+
+    @Test
+    fun `a constructed-action phase is driven by the construct hook, not treated as a stall`() {
+        var constructed = 0
+        val final = drive(
+            ConstructedActionRules(target = 6),
+            initial = 0,
+            construct = { constructed++; 1 },
+        ) { _, legal -> legal.first() }
+        assertTrue(final >= 6)
+        assertTrue(constructed > 0, "the odd states have no enumerable action, so the hook must run")
+    }
+
+    @Test
+    fun `without the hook an empty legal set is still reported as a rules bug`() {
+        val e = assertFailsWith<IllegalStateException> {
+            drive(ConstructedActionRules(target = 6), initial = 0) { _, legal -> legal.first() }
+        }
+        assertTrue("no legal actions" in e.message.orEmpty(), e.message.orEmpty())
+    }
+
 
     @Test
     fun `drives to the terminal state and observes every step`() {
