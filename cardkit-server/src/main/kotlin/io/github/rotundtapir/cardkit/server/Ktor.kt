@@ -68,7 +68,12 @@ fun <S : Any, A : Any, V : Any, C : Any> Application.gameServerModule(
 
     routing {
         get("/health") {
-            val body = """{"status":"ok","rooms":${server.rooms.roomCount()},""" +
+            // "game" identifies WHICH game answered. Two games share one host/proxy here, and a
+            // test suite's "is anything listening on this port?" probe cannot otherwise tell a
+            // stale or foreign server from its own — it proceeds and then fails at the handshake,
+            // which reads as "my game is broken". Callers should match on this before trusting it.
+            val body = """{"status":"ok","game":"${server.descriptor.metricsPrefix}",""" +
+                """"rooms":${server.rooms.roomCount()},""" +
                 """"activeGames":${server.rooms.activeGames()},"draining":${server.rooms.draining}}"""
             call.respondText(body, ContentType.Application.Json)
         }
