@@ -328,7 +328,8 @@ fun OpponentPile(seat: Seat, state: DealAnimationState, width: Dp, handSize: Int
     }
 }
 
-private val DealHandCardWidth = 64.dp
+/** Default width for the dealt-hand row; callers with a height budget pass their own. */
+val DealHandCardWidth = 64.dp
 
 /**
  * The human's hand area while dealing/flipping: face-down backs accumulate as cards land, then
@@ -342,6 +343,9 @@ fun DealingHandRow(
     humanSeat: Seat,
     timings: DealTimings,
     modifier: Modifier = Modifier,
+    // Sized by the caller when the screen is short, so the row that lands mid-deal matches the fan
+    // it becomes instead of overflowing the layout (500#41).
+    cardWidth: Dp = DealHandCardWidth,
 ) {
     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = modifier.fillMaxWidth()) {
         Text("You", fontWeight = FontWeight.Bold)
@@ -353,14 +357,14 @@ fun DealingHandRow(
             contentAlignment = Alignment.Center,
         ) {
             // Hold the row's height before the first card lands so the layout doesn't jump.
-            Spacer(Modifier.height(DealHandCardWidth * 1.4f))
-            Row(horizontalArrangement = Arrangement.spacedBy(-DealHandCardWidth * 0.45f)) {
+            Spacer(Modifier.height(cardWidth * 1.4f))
+            Row(horizontalArrangement = Arrangement.spacedBy(-cardWidth * 0.45f)) {
                 if (state.stage == DealStage.FLIPPING) {
                     cards.forEachIndexed { i, card ->
-                        FlippingCard(card, i, DealHandCardWidth, timings)
+                        FlippingCard(card, i, cardWidth, timings)
                     }
                 } else {
-                    repeat(state.dealtTo(humanSeat)) { CardBack(width = DealHandCardWidth) }
+                    repeat(state.dealtTo(humanSeat)) { CardBack(width = cardWidth) }
                 }
             }
         }
