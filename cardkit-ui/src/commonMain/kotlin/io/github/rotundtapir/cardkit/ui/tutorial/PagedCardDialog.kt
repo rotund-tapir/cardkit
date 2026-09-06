@@ -232,8 +232,8 @@ private fun PageBody(page: TutorialPage, modifier: Modifier = Modifier) {
 /**
  * Shows [current]'s body inside a slot sized to the TALLEST of [pages] at the real width: the
  * pager's chrome (dots, toggles, buttons) never moves between pages, and no page ever clips —
- * regardless of screen width or the user's font scale. Height is still capped by the dialog's
- * constraints; a (pathological) overflow falls back to clipping the bottom padding first.
+ * regardless of screen width or the user's font scale. The pager places it inside a scroller, so
+ * a page taller than the window scrolls rather than clipping.
  */
 @Composable
 fun TallestPageBody(pages: List<TutorialPage>, current: Int, modifier: Modifier = Modifier) {
