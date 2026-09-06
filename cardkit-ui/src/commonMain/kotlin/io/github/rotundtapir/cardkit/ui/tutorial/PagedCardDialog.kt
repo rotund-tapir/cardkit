@@ -14,7 +14,9 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
@@ -172,10 +174,19 @@ fun TutorialPagesDialog(
             // uniformBodyHeight is set, every page is measured at the real width and the body takes
             // the tallest — nothing clips on narrow phones or large font scales, and the chrome
             // never jumps. Otherwise a simple minimum height.
-            if (uniformBodyHeight) {
-                TallestPageBody(pages, current)
-            } else {
-                Column(Modifier.heightIn(min = 180.dp)) { PageBody(pages[current]) }
+            // The body takes what the window leaves after the button row and scrolls if the page
+            // is taller — on a phone in landscape (~360dp tall) a primer page otherwise pushes
+            // Next/Cancel below the window, and nothing on screen leads anywhere.
+            Column(
+                Modifier
+                    .weight(1f, fill = false)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                if (uniformBodyHeight) {
+                    TallestPageBody(pages, current)
+                } else {
+                    Column(Modifier.heightIn(min = 180.dp)) { PageBody(pages[current]) }
+                }
             }
             Spacer(Modifier.height(12.dp))
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
