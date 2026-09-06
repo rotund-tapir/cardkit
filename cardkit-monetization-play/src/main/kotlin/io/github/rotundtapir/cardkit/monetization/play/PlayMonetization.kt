@@ -235,8 +235,10 @@ class PlayMonetization(
                 )
             )
             .build()
-        billingClient.queryProductDetailsAsync(params) { _, products ->
-            removeAdsProduct = products.firstOrNull()
+        // Billing 8: the callback carries a QueryProductDetailsResult (fetched list + the ids Play
+        // could not resolve) instead of a bare list.
+        billingClient.queryProductDetailsAsync(params) { _, result ->
+            removeAdsProduct = result.productDetailsList.firstOrNull()
         }
     }
 
