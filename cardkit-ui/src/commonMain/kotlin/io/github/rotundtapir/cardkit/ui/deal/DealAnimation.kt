@@ -7,6 +7,8 @@ import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -346,19 +348,27 @@ fun DealingHandRow(
     // Sized by the caller when the screen is short, so the row that lands mid-deal matches the fan
     // it becomes instead of overflowing the layout (500#41).
     cardWidth: Dp = DealHandCardWidth,
+    // Fraction of each card left uncovered by its right neighbour. Pass the SAME value the live
+    // hand uses (CardHand's `exposure`): the dealt row is replaced by that fan the moment the flip
+    // ends, and any difference shows as the whole hand snapping tighter or looser.
+    exposure: Float = 0.55f,
 ) {
     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = modifier.fillMaxWidth()) {
         Text("You", fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(8.dp))
+        // Same frame as the live fan — full width, centred when it fits, scrolled from the start
+        // when it doesn't — so the cards land exactly where they will stay. Without the scroller a
+        // wide row overflowed both edges, then jumped left when the interactive hand took over.
         Box(
             modifier = Modifier
                 .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
                 .dealAnchor(state, DealTarget.SeatPile(humanSeat)),
             contentAlignment = Alignment.Center,
         ) {
             // Hold the row's height before the first card lands so the layout doesn't jump.
             Spacer(Modifier.height(cardWidth * 1.4f))
-            Row(horizontalArrangement = Arrangement.spacedBy(-cardWidth * 0.45f)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(-cardWidth * (1f - exposure))) {
                 if (state.stage == DealStage.FLIPPING) {
                     cards.forEachIndexed { i, card ->
                         FlippingCard(card, i, cardWidth, timings)
