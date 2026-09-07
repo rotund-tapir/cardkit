@@ -359,11 +359,14 @@ fun DealingHandRow(
         // Same frame as the live fan — full width, centred when it fits, scrolled from the start
         // when it doesn't — so the cards land exactly where they will stay. Without the scroller a
         // wide row overflowed both edges, then jumped left when the interactive hand took over.
+        // dealAnchor BEFORE the scroller: it must report the viewport, not the (possibly wider)
+        // scrolled content, or a fan that overflows sends the flying cards to a point right of
+        // the visible centre. (Ordering nit caught by euchre's session.)
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .dealAnchor(state, DealTarget.SeatPile(humanSeat)),
+                .dealAnchor(state, DealTarget.SeatPile(humanSeat))
+                .horizontalScroll(rememberScrollState()),
             contentAlignment = Alignment.Center,
         ) {
             // Hold the row's height before the first card lands so the layout doesn't jump.
