@@ -99,14 +99,31 @@ EUCHRE_HAND = [
 # than Euchre's so the J♠ face fills the frame (its original icon, rebuilt to measurement).
 FIVEHUNDRED_HAND = [
     FanCard("A♣", (24, 196), 18),
-    FanCard("K♥", (88, 152), 9),
-    FanCard("J♠", (164, 116), 2),
+    FanCard("K♥", (88, 152), 10),
+    FanCard("J♠", (164, 116), 5),
 ]
-# 500's original plaque gold, measured from its shipped icon, is lighter than Euchre's.
-GOLD_500 = (252, 224, 120)
-PRESETS: dict[str, tuple[list[FanCard], int, str, tuple[int, int, int]]] = {  # hand, card height, label, gold
-    "euchre": (EUCHRE_HAND, 400, "EUCHRE", PLAQUE_GOLD),
-    "500": (FIVEHUNDRED_HAND, 880, "500", GOLD_500),
+@dataclass(frozen=True)
+class Style:
+    """Everything a game tunes besides the fan itself."""
+
+    hand: list[FanCard]
+    card_height: int
+    label: str
+    gold: tuple[int, int, int] = PLAQUE_GOLD
+    border: int = PLAQUE_BORDER
+    felt: tuple[tuple[int, int, int], tuple[int, int, int], tuple[int, int, int]] = (FELT_CENTRE, FELT_EDGE, FELT_CORNER)
+
+
+# 500's shipped icon remains the canonical asset (Jack prefers it: brighter, a touch more zoom, the
+# bower held at a slight angle, a heavier plaque). This preset is an APPROXIMATION tuned side by
+# side — re-rendering from it would change the icon visibly, so don't without asking.
+PRESETS: dict[str, Style] = {
+    "euchre": Style(EUCHRE_HAND, 400, "EUCHRE"),
+    "500": Style(
+        FIVEHUNDRED_HAND, 880, "500",
+        gold=(252, 224, 120), border=4,
+        felt=((58, 138, 62), (32, 100, 38), (20, 80, 26)),
+    ),
 }
 FRONT_INDEX_BOX = (0.02, 0.01, 0.125, 0.26)  # the top-left index, as fractions of a card face
 # Source-card pixels (256×372 faces): the region the top-left index lives in, and the border to keep
@@ -365,7 +382,7 @@ def round_mask(img: Image.Image) -> Image.Image:
 
 
 def main() -> int:
-    global ROOT, CARD_HEIGHT, PLAQUE_GOLD
+    global ROOT, CARD_HEIGHT, PLAQUE_GOLD, PLAQUE_BORDER, FELT_CENTRE, FELT_EDGE, FELT_CORNER
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--preset", choices=sorted(PRESETS), default="euchre", help="which game's hand/label/zoom")
     ap.add_argument("--label", help="plaque text (default: the preset's)")
@@ -375,7 +392,10 @@ def main() -> int:
     ap.add_argument("--preview", metavar="DIR", help="write only the 512px flat design to DIR/icon.png")
     args = ap.parse_args()
     ROOT = args.root.resolve()
-    hand, CARD_HEIGHT, label, PLAQUE_GOLD = PRESETS[args.preset]
+    style = PRESETS[args.preset]
+    hand, CARD_HEIGHT, label = style.hand, style.card_height, style.label
+    PLAQUE_GOLD, PLAQUE_BORDER = style.gold, style.border
+    FELT_CENTRE, FELT_EDGE, FELT_CORNER = style.felt
     if args.card_height:
         CARD_HEIGHT = args.card_height
     if args.label:
